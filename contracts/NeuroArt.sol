@@ -35,7 +35,7 @@ contract NeuroArt is ERC721, ERC721Enumerable, Ownable {
      * @param to The address that will receive the minted NFT.
      * @param tokenURI_ The URI pointing to the off-chain metadata JSON file.
      */
-    function safeMint(address to, string memory tokenURI_) public onlyOwner {
+    function safeMint(address to, string memory tokenURI_) public {
         uint256 tokenId = _nextTokenId;
         _nextTokenId++;
         _safeMint(to, tokenId);

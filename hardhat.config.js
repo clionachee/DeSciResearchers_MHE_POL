@@ -1,5 +1,7 @@
 require("@nomicfoundation/hardhat-toolbox");
 require('dotenv').config({ path: __dirname + '/.env' }); // Explicitly load .env from project root
+console.log("--- Hardhat Config ---");
+console.log("--- End Hardhat Config ---");
 
 /** @type import('hardhat/config').HardhatUserConfig */
 module.exports = {
@@ -9,8 +11,8 @@ module.exports = {
       // Configuration for the local Hardhat Network
     },
     amoy: {
-      url: process.env.POLYGON_AMOY_RPC_URL || "", // Get RPC URL from .env
-      accounts: process.env.DEPLOYER_PRIVATE_KEY !== undefined ? [process.env.DEPLOYER_PRIVATE_KEY] : [], // Get deployer key from .env
+      url: "https://polygon-amoy.g.alchemy.com/v2/SCSeGuQ-2M-9Ndy1ljZl-iLdB6mqrqim", // Directly specify RPC URL
+      accounts: ["0xc4fd92f0550d0b4b0eb9b7c624c85362d3643955865a6cfbddb05fe9d732f08f"], // Directly specify deployer private key
     },
     // Add other networks like Polygon Mainnet here if needed later
   },

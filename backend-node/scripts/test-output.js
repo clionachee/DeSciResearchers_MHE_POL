@@ -1,0 +1,1 @@
+console.log('Output from test-output.js'); 

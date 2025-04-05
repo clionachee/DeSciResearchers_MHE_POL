@@ -1,5 +1,6 @@
 import json
 import random
+import sys # Import sys module to read stdin
 
 def simulate_ai_processing(prompt: str, style_reference: str = None) -> str:
     """Simulates AI processing based on a prompt and optional style.
@@ -11,7 +12,8 @@ def simulate_ai_processing(prompt: str, style_reference: str = None) -> str:
     Returns:
         A JSON string representing the simulated art parameters.
     """
-    print(f"[AI Simulator] Received prompt: '{prompt}', Style: '{style_reference}'")
+    # Use stderr for logging to avoid interfering with JSON output on stdout
+    print(f"[AI Simulator Log] Received prompt: '{prompt}', Style: '{style_reference}'", file=sys.stderr)
 
     # Simulate generating some parameters based on the prompt length or keywords
     complexity = len(prompt) % 5 + 1
@@ -31,13 +33,37 @@ def simulate_ai_processing(prompt: str, style_reference: str = None) -> str:
         "simulation_mode": True
     }
 
-    print(f"[AI Simulator] Generated params: {json.dumps(art_params)}")
+    # Log generated params to stderr
+    print(f"[AI Simulator Log] Generated params: {json.dumps(art_params)}", file=sys.stderr)
+
+    # Return the final JSON result string (this will be printed to stdout later)
     return json.dumps(art_params)
 
-# Example usage (for testing the script directly)
+# Main execution block
 if __name__ == "__main__":
-    test_prompt = "A futuristic cityscape at sunset"
-    result_json = simulate_ai_processing(test_prompt)
-    print("\n--- Simulation Output ---")
-    print(result_json)
-    print("-----------------------") 
+    try:
+        # Read the entire standard input
+        input_json_str = sys.stdin.read()
+        print(f"[AI Simulator Log] Received stdin data: {input_json_str}", file=sys.stderr)
+
+        # Parse the input JSON string
+        input_params = json.loads(input_json_str)
+
+        # Extract prompt and optional style reference from the parsed parameters
+        # Adapt this based on the actual structure sent by Node.js (currently expects {'prompt': '...', 'style': '...'})
+        input_prompt = input_params.get('prompt', 'Default prompt if missing')
+        input_style = input_params.get('style', None)
+
+        # Call the simulation function with the extracted parameters
+        result_json = simulate_ai_processing(input_prompt, input_style)
+
+        # Print the final JSON result to standard output (for Node.js to capture)
+        print(result_json)
+
+    except json.JSONDecodeError as e:
+        print(f"[AI Simulator Error] Failed to decode JSON from stdin: {e}", file=sys.stderr)
+        # Exit with a non-zero code to indicate error to Node.js
+        sys.exit(1)
+    except Exception as e:
+        print(f"[AI Simulator Error] An unexpected error occurred: {e}", file=sys.stderr)
+        sys.exit(1) 

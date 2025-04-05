@@ -2,11 +2,37 @@ const express = require('express');
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs/promises'); // For async file operations
-require('dotenv').config();
+require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
 console.log(process.env);
 const multibaasClient = require('../multibaasClient');
+// We will use dynamic import inside an async function for ipfs-http-client
+// const { create } = require('ipfs-http-client'); // Remove this line
 
 // const { verificationStatus } = require('../server'); // No longer require server directly
+
+// --- IPFS Client Setup (Async) ---
+let ipfsClient = null; // Initialize as null
+
+async function setupIpfsClient() {
+    try {
+        const ipfsApiUrl = process.env.IPFS_API_URL;
+        if (!ipfsApiUrl) {
+            console.warn('[IPFS Setup] IPFS_API_URL not found in .env. IPFS upload will fail.');
+            return; // Exit setup if URL is missing
+        }
+        // Use dynamic import() for ES Module
+        const { create } = await import('ipfs-http-client');
+        ipfsClient = create({ url: ipfsApiUrl });
+        console.log(`[IPFS Setup] IPFS client configured for URL: ${ipfsApiUrl}`);
+    } catch (error) {
+        console.error('[IPFS Setup] Failed to create IPFS client:', error);
+        // Keep ipfsClient as null
+    }
+}
+// We'll call setupIpfsClient later, perhaps before the server starts or on first use
+// For simplicity during init, let's call it here, but be aware it's async
+setupIpfsClient();
+// ------------------------
 
 const router = express.Router();
 const tmpDir = path.join(__dirname, '../tmp'); // Define tmp directory path relative to this file's location
@@ -23,105 +49,191 @@ const ensureTmpDir = async () => {
 };
 ensureTmpDir(); // Call on module load
 
-// POST /api/mint-neuroart
-router.post('/mint-neuroart', async (req, res) => {
+// POST /api/mint-neuroart - RENAME this endpoint
+router.post('/prepare-nft-data', async (req, res) => { // Renamed endpoint
+  // userAddress is NO LONGER needed directly here, but keep recipientAddress variable for clarity
+  // It will be passed to the new execute-mint endpoint later
   const { userAddress, artParams, backgroundChoice, sessionId } = req.body;
-  const verificationStatus = req.app.locals.verificationStatus; // Access from app.locals
+  const verificationStatusMap = req.app.locals.verificationStatus; // Access verification status store
+  const sessionIdMap = req.app.locals.sessionIdToUserIdMap; // Access sessionId -> userId map
 
-  // Basic validation
-  if (!userAddress || !artParams || !backgroundChoice || !sessionId) {
-    return res.status(400).json({ error: 'Missing required fields: userAddress, artParams, backgroundChoice, sessionId' });
+  // Basic validation (artParams might represent Curvegrid AI data now)
+  if (!artParams || !backgroundChoice || !sessionId) {
+    return res.status(400).json({ error: 'Missing required fields: artParams, backgroundChoice, sessionId' });
   }
 
-  // 1. Check verification status
-  const status = verificationStatus[sessionId];
-  console.log(`[API Mint] Checking verification for session ${sessionId}: Status = ${status}`);
-  if (status !== 'verified') {
-    return res.status(403).json({ error: 'User identity not verified for this session.', status: status || 'not_found' });
+ // 1. Check verification status (with mock override for testing)
+ // ... (Existing verification logic remains the same, assuming userDID is correctly assigned now) ...
+ // It should set 'isVerified' and 'userDID' correctly if verification passes
+  let isVerified = false;
+  const MOCK_TEST_SESSION_ID = "test-session-123";
+  let userDID = null;
+  let status = 'not_found';
+
+  if (sessionId === MOCK_TEST_SESSION_ID) {
+      console.log(`[API Prepare] Using MOCK verification override for session: ${sessionId}`);
+      isVerified = true;
+      userDID = "mock:did:placeholder";
+      status = 'verified';
+  } else {
+       const userId = sessionIdMap[sessionId];
+       if (userId) {
+         const userStatus = verificationStatusMap[userId];
+         if (userStatus) {
+             status = userStatus.status;
+             console.log(`[API Prepare] Found status for userId ${userId} (mapped from session ${sessionId}): ${status}`);
+             if (status === 'verified') {
+                 userDID = userId; // ASSUMING MANUAL FIX IS DONE
+                 isVerified = true;
+                 console.log(`[API Prepare] Assigning userDID from verified userId: ${userDID}`);
+             }
+         } else {
+             console.log(`[API Prepare] Mapping found for session ${sessionId} to userId ${userId}, but no status entry for userId.`);
+             status = 'error_missing_user_status';
+         }
+       } else {
+          const sessionStatus = verificationStatusMap[sessionId];
+          if (sessionStatus) {
+              status = sessionStatus.status;
+          }
+          console.log(`[API Prepare] No userId mapping found for session ${sessionId}. Current status (under sessionId): ${status}`);
+       }
+
+       if (status !== 'verified') {
+         console.log(`[API Prepare] Verification check failed for session ${sessionId}. Status: ${status}`);
+         return res.status(403).json({ error: 'User identity not verified or verification failed for this session.', status: status });
+       }
   }
 
-  let aiParameters;
-  try {
-    // 2. Call AI Simulator (Task 7)
-    console.log('[API Mint] Calling AI simulator with params:', artParams);
-    const aiResultJson = await callAiSimulator(artParams); // Call the helper
-    aiParameters = JSON.parse(aiResultJson);
-    console.log('[API Mint] AI Simulator Result:', aiParameters);
-  } catch (error) {
-    console.error('[API Mint] Error calling AI simulator:', error);
-    return res.status(500).json({ error: 'Failed to process art parameters with AI simulator.', details: error.message });
+  if (!isVerified) {
+      console.log(`[API Prepare] Verification check ultimately failed for session ${sessionId}. Final Status: ${status}`);
+      return res.status(403).json({ error: 'User identity not verified for this session.', status: status });
   }
 
+  if (!userDID) {
+       console.error(`[API Prepare] Critical: User is considered verified for session ${sessionId} but userDID is missing.`);
+       return res.status(500).json({ error: 'Internal server error: Verified user DID not found.'});
+  }
+   console.log(`[API Prepare] Verification successful for session ${sessionId}, User DID: ${userDID}. Proceeding to prepare metadata.`);
+
+  // REMOVED: AI Simulation Call
+  // No longer calling the Python script here
+
+  // --- Metadata Preparation & Upload ---
   let tokenURI;
   try {
-    // 3. Prepare Metadata & Upload Mock
-    console.log('[API Mint] Preparing metadata JSON...');
+    console.log('[API Prepare] Preparing metadata JSON...');
+    // Use artParams directly (assuming it's the data from Curvegrid AI)
+    const curvegridAIData = artParams; // Rename for clarity
+
     const metadata = {
       name: `NeuroArt #${Date.now()}`,
-      description: "AI-generated art on the NeuroArt Nexus platform.",
-      image: "ipfs://IMAGE_CID_PLACEHOLDER", // Still a placeholder, needs actual image generation/upload
+      description: "AI-generated art on the NeuroArt Nexus platform, linked to a verified user identity.",
+      image: "ipfs://bafybeibhdemvxnm7o3mt6jcamsfsmwmfzkid7cyxlm6fellgtl7zoingxy", // Specific placeholder CID
       attributes: [
         { trait_type: "Background", value: backgroundChoice },
-        // Add traits from aiParameters (handle potential structure differences)
-        ...(aiParameters?.generated_parameters ? Object.entries(aiParameters.generated_parameters).map(([key, value]) => ({
-          trait_type: key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()), // Format key as Title Case
-          value: Array.isArray(value) ? value.join(', ') : value // Join array values
+        // Integrate Curvegrid AI data into attributes (Example Structure - Adjust as needed)
+        ...(curvegridAIData ? Object.entries(curvegridAIData).map(([key, value]) => ({
+          trait_type: `AI ${key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}`,
+          value: typeof value === 'object' ? JSON.stringify(value) : value // Handle nested objects if any
         })) : []),
-        { trait_type: "Verified User Session", value: sessionId },
-        { trait_type: "AI Simulation Mode", value: aiParameters?.simulation_mode || false }
+         { trait_type: "Verified User DID", value: userDID },
+        // Add other relevant traits if needed
       ]
     };
-    console.log('[API Mint] Metadata prepared:', metadata);
+    console.log('[API Prepare] Metadata prepared:', metadata);
 
-    tokenURI = await uploadMetadataMock(metadata); // Use the mock upload function
-    console.log(`[API Mint] Mock metadata uploaded. Token URI: ${tokenURI}`);
+    // Use the MOCK upload function for now
+    tokenURI = await uploadMetadataMock(metadata);
+    console.log(`[API Prepare] Mock metadata uploaded. Token URI: ${tokenURI}`);
 
-  } catch (error) {
-    console.error('[API Mint] Error preparing or mocking metadata upload:', error);
-    return res.status(500).json({ error: 'Failed to prepare NFT metadata.', details: error.message });
-  }
-
-  // 4. Call MultiBaas to mint
-  try {
-    // console.log(`[API Mint] Calling MultiBaas mintNFT for ${userAddress} with URI: ${tokenURI}`);
-    // const mintResult = await multibaasClient.mintNFT(userAddress, tokenURI);
-    // console.log('[API Mint] Minting initiated successfully via MultiBaas:', mintResult);
-
-    res.status(202).json({
-      message: 'NFT minting process initiated successfully.',
-      tokenURI: tokenURI, // Include the generated token URI
-      transactionDetails: mintResult
-    });
+    // Respond with the tokenURI (and recipient address for convenience)
+    res.status(200).json({ tokenURI: tokenURI, recipientAddress: userAddress }); // Send URI back to Unity
 
   } catch (error) {
-    console.error('[API Mint] Error during the minting process:', error);
-    res.status(500).json({ error: 'Failed to initiate NFT minting.', details: error.message });
+    console.error('[API Prepare] Error preparing or uploading metadata:', error);
+    res.status(500).json({ error: 'Failed to prepare or upload NFT metadata.', details: error.message });
   }
 });
 
-// --- Helper function for calling Python AI script ---
+// NEW Endpoint: POST /api/execute-mint
+// router.post('/execute-mint', async (req, res) => {
+//     console.log("Received request for /api/execute-mint");
+//     const { recipientAddress, tokenURI } = req.body;
+
+//     if (!recipientAddress || !tokenURI) {
+//         console.log("Missing recipientAddress or tokenURI");
+//         return res.status(400).json({ success: false, message: 'Recipient address and token URI are required.' });
+//     }
+
+//     console.log(`Attempting to mint NFT for ${recipientAddress} with URI ${tokenURI}`);
+
+//     try {
+//         // Call the mintNFT function from the multibaasClient
+//         const mintResult = await mintNFT(recipientAddress, tokenURI);
+//         console.log("Minting result from MultiBaas:", mintResult);
+
+//         // Check if the result indicates success (adjust based on actual mintNFT response)
+//         // Assuming mintResult contains transaction details or a success flag
+//         if (mintResult && mintResult.tx) { // Example check, adjust as needed
+//             console.log(`Successfully initiated minting transaction: ${mintResult.tx.hash}`);
+//             res.json({ 
+//                 success: true, 
+//                 message: 'NFT minting initiated successfully.', 
+//                 transactionHash: mintResult.tx.hash, // Return transaction hash
+//                 details: mintResult // Optionally return full details
+//             });
+//         } else {
+//             // Handle cases where mintNFT might resolve but not represent a successful transaction start
+//             console.error("Minting process did not return expected success indicator.", mintResult);
+//             res.status(500).json({ success: false, message: 'Minting process failed or did not return expected result.', details: mintResult });
+//         }
+//     } catch (error) {
+//         console.error('Error calling mintNFT:', error.response ? error.response.data : error.message);
+        
+//         // Check for MultiBaas specific errors (like 404)
+//         if (error.response && error.response.status === 404) {
+//             res.status(404).json({ 
+//                 success: false, 
+//                 message: 'MultiBaas API endpoint not found (404). Check configuration (Base URL, Contract Label).' 
+//             });
+//         } else {
+//             res.status(500).json({ 
+//                 success: false, 
+//                 message: 'Failed to execute minting.', 
+//                 error: error.response ? error.response.data : error.message 
+//             });
+//         }
+//     }
+// });
+
+// --- Helper function for calling Python AI script --- (Keep for now, but unused by prepare endpoint)
 async function callAiSimulator(params) {
-  // Pass params as a JSON string argument to the Python script
   const scriptPath = path.join(__dirname, '../../ai_simulator.py');
+  // Pass params as JSON string via command line argument
+  // Ensure params does not contain characters problematic for shell (like single quotes within string)
+  // A safer way might be base64 encoding/decoding if params are complex
   const paramsString = JSON.stringify(params);
 
-  console.log(`[AI Sim Caller] Running: python "${scriptPath}" '${paramsString}'`);
+  console.log(`[AI Sim Caller] Running: python "${scriptPath}"`);
 
   return new Promise((resolve, reject) => {
-    // Use shell=true on Windows if python isn't directly in PATH or for complex args,
-    // but be mindful of security implications. For simple cases, direct execution is better.
-    const pythonProcess = spawn('python', [scriptPath, paramsString], { shell: process.platform === 'win32' });
+    const pythonProcess = spawn('python', [scriptPath], { shell: process.platform === 'win32' });
     let output = '';
     let errorOutput = '';
 
+    // Send paramsString to python script's stdin
+    pythonProcess.stdin.write(paramsString);
+    pythonProcess.stdin.end();
+
     pythonProcess.stdout.on('data', (data) => {
       output += data.toString();
-      console.log(`[AI Sim stdout]: ${data.toString()}`); // Log stdout
+      console.log(`[AI Sim stdout]: ${data.toString()}`);
     });
 
     pythonProcess.stderr.on('data', (data) => {
       errorOutput += data.toString();
-      console.error(`[AI Sim stderr]: ${data.toString()}`); // Log stderr
+      console.error(`[AI Sim stderr]: ${data.toString()}`);
     });
 
     pythonProcess.on('close', (code) => {
@@ -129,15 +241,14 @@ async function callAiSimulator(params) {
       if (code !== 0) {
         reject(new Error(`AI simulator script exited with code ${code}. Error: ${errorOutput}`));
       } else {
-        // Try to find the JSON output within the potentially verbose stdout
-        const jsonMatch = output.match(/\{.*\}/s); // Simple match for JSON object
+        // Find JSON in potentially mixed output
+        const jsonMatch = output.match(/\{.*\}/s);
         if (jsonMatch) {
              try {
-                // Validate if it's actually JSON before resolving
                 JSON.parse(jsonMatch[0]);
                 resolve(jsonMatch[0]);
             } catch (parseError) {
-                 console.error("[AI Sim Caller] Output wasn't valid JSON despite matching brackets.", parseError);
+                 console.error("[AI Sim Caller] Output wasn't valid JSON.", parseError);
                  reject(new Error(`AI simulator script output could not be parsed as JSON. Output: ${output}`));
             }
         } else {
@@ -154,7 +265,7 @@ async function callAiSimulator(params) {
   });
 }
 
-// --- Helper function for mocking metadata upload ---
+// --- Helper function for mocking metadata upload --- (Keep for now)
 async function uploadMetadataMock(metadata) {
   const timestamp = Date.now();
   const filename = `metadata-${timestamp}.json`;
@@ -163,8 +274,8 @@ async function uploadMetadataMock(metadata) {
   try {
     await fs.writeFile(filePath, JSON.stringify(metadata, null, 2));
     console.log(`[Metadata Mock] Metadata successfully written to ${filePath}`);
-    // Return a file URI (adjust if needed for actual testing)
-    return `file://${path.relative(path.join(__dirname, '..'), filePath).replace(/\\/g, '/')}`; // Relative path from backend-node
+    // Return a simple placeholder URI for mock
+    return `mock://metadata/${filename}`;
 
   } catch (error) {
     console.error(`[Metadata Mock] Error writing metadata file to ${filePath}:`, error);
@@ -172,4 +283,4 @@ async function uploadMetadataMock(metadata) {
   }
 }
 
-module.exports = router; 
+module.exports = router;

@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "polygon": {
+      "command": "node",
+      "args": [
+        "C:\\Users\\beer8\\polygon-mcp\\build\\index.js"
+      ],
+      "env": {
+        "SEED_PHRASE": "gallery regret narrow achieve gym exchange accident modify project question number program"
+      },
+      "disabled": true,
+      "autoApprove": [],
+      "alwaysAllow": []
+    }
+  }
+}

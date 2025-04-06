@@ -4,7 +4,7 @@
 
 **Overview**
 
-DeSci Researchers by Mental Health Engineering is a decentralized platform designed to bridge the gap between scientific researchers and the public. By leveraging blockchain technologies such as Polygon, Curvegrid, and Self Protocol, the platform enables researchers to mint their work as NFTs, providing transparent and immediate access to their findings. This approach addresses traditional challenges in research dissemination, including prolonged publication delays, data silos, and limited collaboration opportunities.
+DeSci Researchers by Mental Health Engineering is a decentralised environment designed to bridge the gap between scientific researchers and the public. By leveraging blockchain technologies such as Polygon, Curvegrid, and Self Protocol, the platform enables researchers to mint their work as NFTs, providing transparent and immediate access to their findings. This approach addresses traditional challenges in research dissemination, including prolonged publication delays, data silos, and limited collaboration opportunities.
 
 **Key Features**
 
